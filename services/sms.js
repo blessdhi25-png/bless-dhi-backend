@@ -70,6 +70,16 @@ async function sendViaAT(phone, message) {
 
   const normalized = normalizePhone(phone);
   console.log(`[SMS] Sending via AT to ${normalized}`);
+  function normalizePhone(phone) {
+  let p = phone.replace(/[\s\-\(\)]/g, '');
+
+  if (p.startsWith('+233')) return p;        // already correct
+  if (p.startsWith('233'))  return '+' + p;  // missing + only
+  if (p.startsWith('0'))    return '+233' + p.slice(1); // local format
+  if (p.length === 9)       return '+233' + p; // bare 9 digits
+
+  return '+' + p;
+}
 
   // Build options — only add 'from' if sender ID is set
   const options = {

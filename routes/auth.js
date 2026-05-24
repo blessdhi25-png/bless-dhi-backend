@@ -78,12 +78,13 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    const phoneRx = /^\+?[0-9]{7,15}$/;
-    if (!phoneRx.test(phone.replace(/[\s\-]/g, ''))) {
+    const phoneRx = /^\+?[0-9]{9,13}$/;
+    const normalized = normalizePhone(phone.replace(/[\s\-\(\)]/g, ''));
+    if (normalized.length !== 13) {  // +233 + 9 digits = 13 chars
       return res.status(400).json({
-        error: 'Invalid phone number (7-15 digits)'
-      });
-    }
+       error: 'Invalid Ghana phone number. Use format: 0XXXXXXXXX or +233XXXXXXXXX'
+     });
+   }
 
     if (password.length < 6) {
       return res.status(400).json({
