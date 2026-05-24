@@ -3,7 +3,7 @@ const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const db         = require('../db');
-const { sendOTPSMS } = require('../services/sms');
+const { sendOTPSMS, normalizePhone } = require('../services/sms'); // ← fixed
 require('dotenv').config();
 
 // ── Email transporter ──────────────────────────────
@@ -78,14 +78,6 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    const phoneRx = /^\+?[0-9]{9,13}$/;
-    const normalized = normalizePhone(phone.replace(/[\s\-\(\)]/g, ''));
-    if (normalized.length !== 13) {  // +233 + 9 digits = 13 chars
-      return res.status(400).json({
-       error: 'Invalid Ghana phone number. Use format: 0XXXXXXXXX or +233XXXXXXXXX'
-     });
-   }
-
     if (password.length < 6) {
       return res.status(400).json({
         error: 'Password must be at least 6 characters'
@@ -96,9 +88,20 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Invalid role' });
     }
 
+    // Normalize and validate phone
+    const normalizedPhone = normalizePhone(
+      phone.replace(/[\s\-\(\)]/g, '')
+    );
+    if (normalizedPhone.length !== 13) {
+      return res.status(400).json({
+        error: 'Invalid phone number. Use format: 0XXXXXXXXX or +233XXXXXXXXX'
+      });
+    }
+
+    // Uniqueness checks
     const existingUser = db
       .prepare('SELECT id FROM users WHERE username=?')
-      .get(username);
+      .get(username.trim());
     if (existingUser) {
       return res.status(409).json({
         error: `Username "${username}" is already taken`
@@ -106,8 +109,8 @@ router.post('/register', async (req, res) => {
     }
 
     const existingEmail = db
-      .prepare('SELECT id FROM users WHERE email=?')
-      .get(email);
+      .prepare('SELECT id FROM users WHERE LOWER(email)=LOWER(?)')
+      .get(email.trim());
     if (existingEmail) {
       return res.status(409).json({
         error: `Email "${email}" is already registered`
@@ -116,20 +119,24 @@ router.post('/register', async (req, res) => {
 
     const existingPhone = db
       .prepare('SELECT id FROM users WHERE phone=?')
-      .get(phone);
+      .get(normalizedPhone);
     if (existingPhone) {
       return res.status(409).json({
-        error: `Phone "${phone}" is already registered`
+        error: 'Phone number is already registered'
       });
     }
 
+    // Create user with normalized phone
     const hash = await bcrypt.hash(password, 10);
     const result = db.prepare(`
       INSERT INTO users
         (username, password_hash, full_name, email,
          phone, role, is_active, email_verified, phone_verified)
       VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0)
-    `).run(username, hash, fullName, email, phone, role);
+    `).run(
+      username.trim(), hash, fullName.trim(),
+      email.trim().toLowerCase(), normalizedPhone, role
+    );
 
     const userId = result.lastInsertRowid;
 
@@ -142,16 +149,15 @@ router.post('/register', async (req, res) => {
       INSERT INTO otp_codes
         (user_id, identifier, code, type, expires_at)
       VALUES (?, ?, ?, 'email', ?)
-    `).run(userId, email, code, expires);
+    `).run(userId, email.trim().toLowerCase(), code, expires);
 
     try {
-      await sendOTPEmail(email, code);
+      await sendOTPEmail(email.trim(), code);
       console.log(`[Email OTP] Sent to ${email}`);
     } catch (emailErr) {
       console.error('[Email OTP] Failed:', emailErr.message);
     }
 
-    // Always log for dev
     console.log(`[DEV] Email OTP for ${email}: ${code}`);
 
     res.json({
@@ -198,18 +204,15 @@ router.post('/verify-email', async (req, res) => {
       });
     }
 
-    // Mark used + verify email
     db.prepare('UPDATE otp_codes SET used=1 WHERE id=?')
       .run(otp.id);
     db.prepare('UPDATE users SET email_verified=1 WHERE id=?')
       .run(userId);
 
-    // Get user phone
     const user = db
       .prepare('SELECT phone FROM users WHERE id=?')
       .get(userId);
 
-    // Generate phone OTP
     const phoneCode = genOTP();
     const expires   = new Date(Date.now() + 10 * 60 * 1000)
       .toISOString();
@@ -220,15 +223,13 @@ router.post('/verify-email', async (req, res) => {
       VALUES (?, ?, ?, 'phone', ?)
     `).run(userId, user.phone, phoneCode, expires);
 
-    // Send SMS
     try {
       const result = await sendOTPSMS(user.phone, phoneCode);
-      console.log(`[Phone OTP] Send result:`, result);
+      console.log('[Phone OTP] Send result:', result);
     } catch (smsErr) {
       console.error('[Phone OTP] SMS send failed:', smsErr.message);
     }
 
-    // Always log for dev
     console.log('');
     console.log('╔══════════════════════════════════════╗');
     console.log('  PHONE OTP');
@@ -278,9 +279,7 @@ router.post('/verify-phone', async (req, res) => {
     db.prepare('UPDATE otp_codes SET used=1 WHERE id=?')
       .run(otp.id);
     db.prepare(`
-      UPDATE users
-      SET phone_verified=1, is_active=1
-      WHERE id=?
+      UPDATE users SET phone_verified=1, is_active=1 WHERE id=?
     `).run(userId);
 
     const user = db
@@ -321,15 +320,13 @@ router.post('/resend-otp', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Invalidate old codes
     db.prepare(`
       UPDATE otp_codes SET used=1
       WHERE user_id=? AND type=? AND used=0
     `).run(userId, type);
 
-    const code    = genOTP();
-    const expires = new Date(Date.now() + 10 * 60 * 1000)
-      .toISOString();
+    const code       = genOTP();
+    const expires    = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const identifier = type === 'email' ? user.email : user.phone;
 
     db.prepare(`
@@ -381,8 +378,8 @@ router.post('/login', async (req, res) => {
     }
 
     const user = db
-      .prepare('SELECT * FROM users WHERE username=?')
-      .get(username);
+      .prepare('SELECT * FROM users WHERE LOWER(username)=LOWER(?)')
+      .get(username.trim());
 
     if (!user) {
       return res.status(401).json({
@@ -390,9 +387,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const match = await bcrypt.compare(
-      password, user.password_hash
-    );
+    const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       return res.status(401).json({
         error: 'Invalid username or password'
