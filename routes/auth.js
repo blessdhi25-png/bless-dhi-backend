@@ -206,8 +206,10 @@ router.post('/verify-email', async (req, res) => {
 
     db.prepare('UPDATE otp_codes SET used=1 WHERE id=?')
       .run(otp.id);
-    db.prepare('UPDATE users SET email_verified=1 WHERE id=?')
-      .run(userId);
+    //db.prepare('UPDATE users SET email_verified=1 WHERE id=?')
+      //.run(userId);
+      db.prepare('UPDATE users SET email_verified=1, phone_verified=1, is_active=1 WHERE id=?')
+        .run(userId);
 
     const user = db
       .prepare('SELECT phone FROM users WHERE id=?')
@@ -238,10 +240,21 @@ router.post('/verify-email', async (req, res) => {
     console.log('╚══════════════════════════════════════╝');
     console.log('');
 
-    res.json({
-      message: 'Email verified. Phone OTP sent.',
-      step: 'verify_phone'
-    });
+    //res.json({
+      //message: 'Email verified. Phone OTP sent.',
+      //step: 'verify_phone'
+    //});
+    // Return step as 'complete' instead of 'verify_phone'
+res.json({
+  message: 'Email verified! Account activated.',
+  step: 'complete',
+  user: {
+    id:       userRecord.id,
+    username: userRecord.username,
+    fullName: userRecord.full_name,
+    role:     userRecord.role,
+  }
+});
 
   } catch (err) {
     console.error('Verify email error:', err);
@@ -400,6 +413,16 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    //if (!user.email_verified && user.role !== 'admin') {
+      //return res.status(403).json({
+        //error: 'Please verify your email first.',
+       // needsVerification: true,
+        //userId: user.id,
+       // step: 'verify_email'
+      //});
+   // }
+
+   // To this — only require email verification:
     if (!user.email_verified && user.role !== 'admin') {
       return res.status(403).json({
         error: 'Please verify your email first.',
