@@ -204,57 +204,56 @@ router.post('/verify-email', async (req, res) => {
       });
     }
 
+    // Mark used + verify email + activate account immediately
     db.prepare('UPDATE otp_codes SET used=1 WHERE id=?')
       .run(otp.id);
-    //db.prepare('UPDATE users SET email_verified=1 WHERE id=?')
-      //.run(userId);
-      db.prepare('UPDATE users SET email_verified=1, phone_verified=1, is_active=1 WHERE id=?')
-        .run(userId);
+    db.prepare(`
+      UPDATE users
+      SET email_verified=1, phone_verified=1, is_active=1
+      WHERE id=?
+    `).run(userId);
 
-    const user = db
-      .prepare('SELECT phone FROM users WHERE id=?')
+    const userRecord = db
+      .prepare('SELECT id,username,full_name,role FROM users WHERE id=?')
       .get(userId);
 
-    const phoneCode = genOTP();
-    const expires   = new Date(Date.now() + 10 * 60 * 1000)
-      .toISOString();
-
-    db.prepare(`
-      INSERT INTO otp_codes
-        (user_id, identifier, code, type, expires_at)
-      VALUES (?, ?, ?, 'phone', ?)
-    `).run(userId, user.phone, phoneCode, expires);
-
+    // Still try to send phone OTP in background (optional)
     try {
-      const result = await sendOTPSMS(user.phone, phoneCode);
-      console.log('[Phone OTP] Send result:', result);
+      const user = db
+        .prepare('SELECT phone FROM users WHERE id=?')
+        .get(userId);
+
+      const phoneCode = genOTP();
+      const expires   = new Date(Date.now() + 10 * 60 * 1000)
+        .toISOString();
+
+      db.prepare(`
+        INSERT INTO otp_codes
+          (user_id, identifier, code, type, expires_at)
+        VALUES (?, ?, ?, 'phone', ?)
+      `).run(userId, user.phone, phoneCode, expires);
+
+      // Send SMS without blocking
+      sendOTPSMS(user.phone, phoneCode)
+        .then(r => console.log('[Phone OTP] Sent:', r))
+        .catch(e => console.log('[Phone OTP] Failed (optional):', e.message));
+
+      console.log(`[DEV] Phone OTP for ${user.phone}: ${phoneCode}`);
     } catch (smsErr) {
-      console.error('[Phone OTP] SMS send failed:', smsErr.message);
+      console.log('[Phone OTP] Skipped:', smsErr.message);
     }
 
-    console.log('');
-    console.log('╔══════════════════════════════════════╗');
-    console.log('  PHONE OTP');
-    console.log(`  To:   ${user.phone}`);
-    console.log(`  Code: ${phoneCode}`);
-    console.log('╚══════════════════════════════════════╝');
-    console.log('');
-
-    //res.json({
-      //message: 'Email verified. Phone OTP sent.',
-      //step: 'verify_phone'
-    //});
-    // Return step as 'complete' instead of 'verify_phone'
-res.json({
-  message: 'Email verified! Account activated.',
-  step: 'complete',
-  user: {
-    id:       userRecord.id,
-    username: userRecord.username,
-    fullName: userRecord.full_name,
-    role:     userRecord.role,
-  }
-});
+    // Account is active — return complete immediately
+    res.json({
+      message: 'Email verified! Account activated successfully.',
+      step: 'complete',
+      user: {
+        id:       userRecord.id,
+        username: userRecord.username,
+        fullName: userRecord.full_name,
+        role:     userRecord.role,
+      }
+    });
 
   } catch (err) {
     console.error('Verify email error:', err);
