@@ -1,35 +1,35 @@
 const router = require('express').Router();
 const db     = require('../db');
 const auth   = require('../middleware/auth');
-const multer = require('multer');
+//const multer = require('multer');
 const path   = require('path');
 const { cloudinary, upload } = require('../services/cloudinary');
-const fs     = require('fs');
+//const fs     = require('fs');
 
 // ── File upload setup ──────────────────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads/hostel_media');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e6);
-    cb(null, unique + path.extname(file.originalname));
-  }
-});
+//const storage = multer.diskStorage({
+  //destination: (req, file, cb) => {
+    //const dir = path.join(__dirname, '../uploads/hostel_media');
+    //if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    //cb(null, dir);
+  //},
+  //filename: (req, file, cb) => {
+    //const unique = Date.now() + '-' + Math.round(Math.random() * 1e6);
+    //cb(null, unique + path.extname(file.originalname));
+  //}
+//});
 
-const upload = multer({
-  storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
-  fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|mp4|avi|mkv|mov|wmv|webm/;
-    const ok = allowed.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    cb(null, ok);
-  }
-});
+//const upload = multer({
+  //storage,
+  //limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+  //fileFilter: (req, file, cb) => {
+    //const allowed = /jpeg|jpg|png|gif|mp4|avi|mkv|mov|wmv|webm/;
+    //const ok = allowed.test(
+      //path.extname(file.originalname).toLowerCase()
+    //);
+    //cb(null, ok);
+  //}
+//});
 
 // Guard: manager only
 const managerOnly = (req, res, next) => {
