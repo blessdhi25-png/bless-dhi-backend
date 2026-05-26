@@ -3,6 +3,7 @@ const db     = require('../db');
 const auth   = require('../middleware/auth');
 const multer = require('multer');
 const path   = require('path');
+const { cloudinary, upload } = require('../services/cloudinary');
 const fs     = require('fs');
 
 // ── File upload setup ──────────────────────────────
@@ -404,7 +405,7 @@ router.get('/media', auth, managerOnly, (req, res) => {
 
 // POST /api/manager/media
 router.post('/media', auth, managerOnly,
-  upload.array('files', 20), (req, res) => {
+  upload.array('files', 20), async (req, res) => {
     const hostel = db.prepare(
       'SELECT id FROM hostels WHERE manager_id = ?'
     ).get(req.user.id);
@@ -414,51 +415,64 @@ router.post('/media', auth, managerOnly,
       });
     }
 
-    const videoExts = ['mp4','avi','mkv','mov','wmv','flv','webm'];
-    const uploaded  = [];
+    const uploaded = [];
 
     for (const file of req.files) {
-      const ext      = path.extname(file.originalname)
-        .toLowerCase().replace('.', '');
-      const fileType = videoExts.includes(ext) ? 'video' : 'image';
-      const filePath = `/uploads/hostel_media/${file.filename}`;
+      const isVideo    = file.mimetype.startsWith('video/');
+      const fileType   = isVideo ? 'video' : 'image';
+      // Cloudinary returns the URL in file.path
+      const fileUrl    = file.path;
+      const publicId   = file.filename;
 
       const result = db.prepare(`
         INSERT INTO hostel_media
           (hostel_id, file_path, file_type)
         VALUES (?, ?, ?)
-      `).run(hostel.id, filePath, fileType);
+      `).run(hostel.id, fileUrl, fileType);
 
       uploaded.push({
-        id: result.lastInsertRowid,
-        filePath,
+        id:           result.lastInsertRowid,
+        filePath:     fileUrl,
         fileType,
-        originalName: file.originalname
+        originalName: file.originalname,
       });
     }
 
     res.status(201).json({
       message: `${uploaded.length} file(s) uploaded.`,
-      media: uploaded
+      media:   uploaded,
     });
   }
 );
 
 // DELETE /api/manager/media/:id
-router.delete('/media/:id', auth, managerOnly, (req, res) => {
+router.delete('/media/:id', auth, managerOnly, async (req, res) => {
   const hostel = db.prepare(
     'SELECT id FROM hostels WHERE manager_id = ?'
   ).get(req.user.id);
   const media = db.prepare(
     'SELECT * FROM hostel_media WHERE id = ? AND hostel_id = ?'
   ).get(req.params.id, hostel?.id);
+
   if (!media) {
     return res.status(404).json({ error: 'Media not found.' });
   }
 
-  // Delete file from disk
-  const fullPath = path.join(__dirname, '..', media.file_path);
-  if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+  // Delete from Cloudinary
+  try {
+    const isVideo  = media.file_type === 'video';
+    // Extract public_id from Cloudinary URL
+    const urlParts = media.file_path.split('/');
+    const filename = urlParts[urlParts.length - 1].split('.')[0];
+    const folder   = 'bless_dhi_hostels';
+    const publicId = `${folder}/${filename}`;
+
+    await cloudinary.uploader.destroy(publicId, {
+      resource_type: isVideo ? 'video' : 'image',
+    });
+  } catch (err) {
+    console.error('[Cloudinary] Delete failed:', err.message);
+  }
 
   db.prepare('DELETE FROM hostel_media WHERE id = ?').run(media.id);
   res.json({ message: 'Media deleted.' });
