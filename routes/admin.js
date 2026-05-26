@@ -356,4 +356,68 @@ router.get('/bookings', auth, adminOnly, (req, res) => {
   res.json({ bookings });
 });
 
+// ─────────────────────────────────────────────────
+//  PROFILE — change password
+// ─────────────────────────────────────────────────
+router.put('/profile/password', auth, adminOnly, async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        error: 'All password fields are required.'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        error: 'New password must be at least 6 characters.'
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        error: 'New passwords do not match.'
+      });
+    }
+
+    const admin = db
+      .prepare('SELECT * FROM users WHERE id = ? AND role = ?')
+      .get(req.user.id, 'admin');
+
+    if (!admin) {
+      return res.status(404).json({ error: 'Admin not found.' });
+    }
+
+    const match = await bcrypt.compare(
+      currentPassword, admin.password_hash
+    );
+    if (!match) {
+      return res.status(401).json({
+        error: 'Current password is incorrect.'
+      });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    db.prepare(
+      'UPDATE users SET password_hash = ? WHERE id = ?'
+    ).run(hash, admin.id);
+
+    res.json({ message: 'Password changed successfully!' });
+
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: 'Failed to change password.' });
+  }
+});
+
+// GET /api/admin/profile
+router.get('/profile', auth, adminOnly, (req, res) => {
+  const admin = db.prepare(
+    'SELECT id,username,full_name,email,role,created_at FROM users WHERE id=?'
+  ).get(req.user.id);
+  if (!admin) return res.status(404).json({ error: 'Not found.' });
+  res.json({ admin });
+});
+
 module.exports = router;
